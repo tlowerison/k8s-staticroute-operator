@@ -20,7 +20,7 @@ from utils import valid_ip_address
 # =======================================================================================================
 
 
-def manage_static_route(operation, destination, gateway, logger=None):
+def manage_static_route(operation, destination, gateway, interface, logger=None, override_bad_destination=False):
     operation_success = False
     message = ""
 
@@ -32,7 +32,7 @@ def manage_static_route(operation, destination, gateway, logger=None):
         return (False, message)
 
     # We don't want to mess with default GW settings, or with the '0.0.0.0' IP address
-    if destination == DEFAULT_GW_CIDR or destination == NOT_USABLE_IP_ADDRESS:
+    if not override_bad_destination and (destination == DEFAULT_GW_CIDR or destination == NOT_USABLE_IP_ADDRESS):
         message = f"Route {operation} request denied - dest: {destination}, gateway: {gateway}!"
         if logger is not None:
             logger.error(message)
@@ -40,7 +40,19 @@ def manage_static_route(operation, destination, gateway, logger=None):
 
     with IPRoute() as ipr:
         try:
-            ipr.route(operation, dst=destination, gateway=gateway)
+            if interface is None:
+                ipr.route(
+                    operation,
+                    dst=destination,
+                    gateway=gateway,
+                )
+            else:
+                ipr.route(
+                    operation,
+                    dst=destination,
+                    gateway=gateway,
+                    oif=ipr.link_lookup(ifname=interface)[0],
+                )
             operation_success = True
             message = f"Success - Dest: {destination}, gateway: {gateway}, operation: {operation}."
             if logger is not None:
@@ -54,7 +66,7 @@ def manage_static_route(operation, destination, gateway, logger=None):
     return (operation_success, message)
 
 
-def process_static_routes(routes, operation, event_ctx=None, logger=None):
+def process_static_routes(routes, operation, event_ctx=None, logger=None, override_bad_destination=False):
     status = []
 
     for route in routes:
@@ -62,7 +74,9 @@ def process_static_routes(routes, operation, event_ctx=None, logger=None):
             operation=operation,
             destination=route["destination"],
             gateway=route["gateway"],
+            interface=route["interface"],
             logger=logger,
+            override_bad_destination=override_bad_destination,
         )
 
         if not operation_succeeded:
@@ -70,6 +84,7 @@ def process_static_routes(routes, operation, event_ctx=None, logger=None):
                 {
                     "destination": route["destination"],
                     "gateway": route["gateway"],
+                    "interface": route["interface"],
                     "status": ROUTE_NOT_READY_MSG,
                 }
             )
@@ -85,6 +100,7 @@ def process_static_routes(routes, operation, event_ctx=None, logger=None):
             {
                 "destination": route["destination"],
                 "gateway": route["gateway"],
+                "interface": route["interface"],
                 "status": ROUTE_READY_MSG,
             }
         )
@@ -109,12 +125,15 @@ def process_static_routes(routes, operation, event_ctx=None, logger=None):
 def create_fn(body, spec, logger, **_):
     destinations = spec.get("destinations", [])
     gateway = spec["gateway"]
+    interface = spec["interface"]
+    override_bad_destination = spec["force"]
+    remove = spec["remove"]
     routes_to_add_spec = [
-        {"destination": destination, "gateway": gateway} for destination in destinations
+            {"destination": destination, "gateway": gateway, "interface": interface, "override_bad_destination": override_bad_destination} for destination in destinations
     ]
 
     return process_static_routes(
-        routes=routes_to_add_spec, operation="add", event_ctx=body, logger=logger
+        routes=routes_to_add_spec, operation="del" if remove else "add", event_ctx=body, logger=logger
     )
 
 
@@ -131,26 +150,32 @@ def update_fn(body, old, new, logger, **_):
     new_gateway = new["spec"]["gateway"]
     old_destinations = old["spec"].get("destinations", [])
     new_destinations = new["spec"].get("destinations", [])
+    old_interface = old["spec"]["interface"]
+    new_interface = new["spec"]["interface"]
+    old_remove = old["spec"]["remove"]
+    new_remove = new["spec"]["remove"]
     destinations_to_delete = list(set(old_destinations) - set(new_destinations))
     destinations_to_add = list(set(new_destinations) - set(old_destinations))
 
     routes_to_delete_spec = [
-        {"destination": destination, "gateway": old_gateway}
+        {"destination": destination, "gateway": old_gateway, "interface": old_interface}
         for destination in destinations_to_delete
     ]
 
     process_static_routes(
-        routes=routes_to_delete_spec, operation="del", event_ctx=body, logger=logger
+        routes=routes_to_delete_spec, operation="add" if old_remove else "del", event_ctx=body, logger=logger
     )
 
     routes_to_add_spec = [
-        {"destination": destination, "gateway": new_gateway}
+        {"destination": destination, "gateway": new_gateway, "interface": new_interface}
         for destination in destinations_to_add
     ]
 
-    return process_static_routes(
-        routes=routes_to_add_spec, operation="add", event_ctx=body, logger=logger
+    process_static_routes(
+        routes=routes_to_add_spec, operation="del" if new_remove else "add", event_ctx=body, logger=logger
     )
+
+    return
 
 
 # ============================== Delete Handler =====================================
@@ -164,10 +189,14 @@ def update_fn(body, old, new, logger, **_):
 def delete(body, spec, logger, **_):
     destinations = spec.get("destinations", [])
     gateway = spec["gateway"]
+    interface = spec["interface"]
+    override_bad_destination = spec["force"]
+    remove = spec["remove"]
+
     routes_to_delete_spec = [
-        {"destination": destination, "gateway": gateway} for destination in destinations
+            {"destination": destination, "gateway": gateway, "interface": interface, "override_bad_destination": override_bad_destination} for destination in destinations
     ]
 
     return process_static_routes(
-        routes=routes_to_delete_spec, operation="del", event_ctx=body, logger=logger
+        routes=routes_to_delete_spec, operation="add" if remove else "del", event_ctx=body, logger=logger
     )

@@ -27,6 +27,11 @@ spec:
       name: Gateway
       priority: 1
       type: string
+    - description: Interface to route through
+      jsonPath: .spec.interface
+      name: Ethernet Interface
+      priority: 1
+      type: string
     name: v1
     schema:
       openAPIV3Schema:
@@ -40,10 +45,23 @@ spec:
                   pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}$|^([0-9]{1,3}\.){3}[0-9]{1,3}(\/([0-9]|[1-2][0-9]|3[0-2]))?$
                   type: string
                 type: array
+              force:
+                default: false
+                description: Force the route to be created (or removed), overriding
+                  ip address filtering (optional)
+                type: boolean
               gateway:
                 description: Gateway to route through (required)
                 pattern: ^([0-9]{1,3}\.){3}[0-9]{1,3}$
                 type: string
+              interface:
+                default: eth0
+                description: Interface to route through (optional)
+                type: string
+              remove:
+                default: false
+                description: Remove the route (optional)
+                type: boolean
             required:
             - destinations
             - gateway

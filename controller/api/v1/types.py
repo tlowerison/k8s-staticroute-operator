@@ -37,6 +37,13 @@ class StaticRoute(OpenAPIV3Schema):
             "description": "Gateway to route through",
             "jsonPath": ".spec.gateway",
         },
+        {
+            "name": "Ethernet Interface",
+            "type": "string",
+            "priority": 1,
+            "description": "Interface to route through",
+            "jsonPath": ".spec.interface",
+        },
     ]
 
     Destination = NewType("Destination", str)
@@ -54,4 +61,22 @@ class StaticRoute(OpenAPIV3Schema):
             description="Gateway to route through (required)",
             pattern="^([0-9]{1,3}\.){3}[0-9]{1,3}$",
         )
+    )
+    interface: str = field(
+        metadata=schema(
+            description="Interface to route through (optional)",
+        ),
+        default="eth0"
+    )
+    remove: bool = field(
+        metadata=schema(
+            description="Remove the route (optional)",
+        ),
+        default=False
+    )
+    force: bool = field(
+        metadata=schema(
+            description="Force the route to be created (or removed), overriding ip address filtering (optional)",
+        ),
+        default=False
     )
