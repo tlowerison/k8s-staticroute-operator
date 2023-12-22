@@ -20,8 +20,15 @@ class StaticRoute(OpenAPIV3Schema):
         {
             "name": "Age",
             "type": "date",
-            "priority": 0,
+            "priority": 1,
             "jsonPath": ".metadata.creationTimestamp",
+        },
+        { 
+            "name": "Node Name",
+            "type": "string",
+            "priority": 1,
+            "description": "Node affinity by name (optional)",
+            "jsonPath": ".spec.nodeName",
         },
         {
             "name": "Destinations",
@@ -62,11 +69,23 @@ class StaticRoute(OpenAPIV3Schema):
             pattern="^([0-9]{1,3}\.){3}[0-9]{1,3}$",
         )
     )
+    nodeName: str = field(
+        metadata=schema(
+            description="Node affinity by name (optional)",
+        ),
+        default=None
+    )
     interface: str = field(
         metadata=schema(
             description="Interface to route through (optional)",
         ),
-        default="eth0"
+        default=None
+    )
+    replace: bool = field(
+        metadata=schema(
+            description="Replace the route if exists, otherwise add (optional)",
+        ),
+        default=False
     )
     remove: bool = field(
         metadata=schema(

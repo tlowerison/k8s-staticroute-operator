@@ -36,6 +36,7 @@ DEV_REQUIREMENTS_FILE   ?= requirements-dev.txt
 
 # Docker related stuff
 CONTROLLER_IMAGE_TAG  ?= $(ORGANIZATION)/$(PROJECT_NAME):v$(PROJECT_VERSION)
+DOCKER_IMAGE_PLATFORM ?= linux/amd64
 
 # Kubernetes related stuff
 CURRENT_K8S_CLUSTER        ?= $(shell $(KUBECTL_CMD) config current-context)
@@ -82,7 +83,7 @@ release: manifests ## Create release artifacts for the project.
 .PHONY: docker-image
 docker-image: release ## Build controller Docker image for the project.
 	@echo "Building operator Docker image with version $(PROJECT_VERSION) ..."
-	@docker build -t $(CONTROLLER_IMAGE_TAG) .
+	@docker build -t $(CONTROLLER_IMAGE_TAG) . --platform $(DOCKER_IMAGE_PLATFORM)
 
 .PHONY: docker-push
 docker-push: docker-image ## Push controller Docker image to Docker Hub.

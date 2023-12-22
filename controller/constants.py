@@ -1,3 +1,5 @@
+import os
+
 DEFAULT_GW_CIDR = "0.0.0.0/0"
 NOT_USABLE_IP_ADDRESS = "0.0.0.0"
 
@@ -6,4 +8,7 @@ ROUTE_NOT_READY_MSG = "NotReady"
 ROUTE_EVT_MSG = {
     "add": {"success": "RouteCreateSucceeded", "failure": "RouteCreateFailed"},
     "del": {"success": "RouteDeleteSucceeded", "failure": "RouteDeleteFailed"},
+    "replace": {"success": "RouteReplaceSucceeded", "failure": "RouteReplaceFailed"},
 }
+
+NODE_HOSTNAME = os.getenv('NODE_HOSTNAME')

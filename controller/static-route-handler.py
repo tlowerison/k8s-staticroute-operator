@@ -2,11 +2,12 @@ import kopf
 from pyroute2 import IPRoute
 from api.v1.types import StaticRoute
 from constants import DEFAULT_GW_CIDR
+from constants import NODE_HOSTNAME
 from constants import NOT_USABLE_IP_ADDRESS
 from constants import ROUTE_EVT_MSG
 from constants import ROUTE_READY_MSG
 from constants import ROUTE_NOT_READY_MSG
-from utils import valid_ip_address
+from utils import valid_ip_address, valid_ip_interface
 
 
 # =================================== Static route management ===========================================
@@ -25,7 +26,7 @@ def manage_static_route(operation, destination, gateway, interface, logger=None,
     message = ""
 
     # Check if destination/gateway IP address/CIDR is valid first
-    if not valid_ip_address(destination) or not valid_ip_address(gateway):
+    if not valid_ip_interface(destination) or not valid_ip_address(gateway):
         message = f"Invalid IP address specified for route - dest: {destination}, gateway: {gateway}!"
         if logger is not None:
             logger.error(message)
@@ -66,25 +67,25 @@ def manage_static_route(operation, destination, gateway, interface, logger=None,
     return (operation_success, message)
 
 
-def process_static_routes(routes, operation, event_ctx=None, logger=None, override_bad_destination=False):
+def process_static_routes(routes, operation, event_ctx=None, logger=None):
     status = []
 
     for route in routes:
         operation_succeeded, message = manage_static_route(
             operation=operation,
-            destination=route["destination"],
-            gateway=route["gateway"],
-            interface=route["interface"],
+            destination=route.get("destination"),
+            gateway=route.get("gateway"),
+            interface=route.get("interface"),
+            override_bad_destination=route.get("override_bad_destination"),
             logger=logger,
-            override_bad_destination=override_bad_destination,
         )
 
         if not operation_succeeded:
             status.append(
                 {
-                    "destination": route["destination"],
-                    "gateway": route["gateway"],
-                    "interface": route["interface"],
+                    "destination": route.get("destination"),
+                    "gateway": route.get("gateway"),
+                    "interface": route.get("interface"),
                     "status": ROUTE_NOT_READY_MSG,
                 }
             )
@@ -98,9 +99,9 @@ def process_static_routes(routes, operation, event_ctx=None, logger=None, overri
 
         status.append(
             {
-                "destination": route["destination"],
-                "gateway": route["gateway"],
-                "interface": route["interface"],
+                "destination": route.get("destination"),
+                "gateway": route.get("gateway"),
+                "interface": route.get("interface"),
                 "status": ROUTE_READY_MSG,
             }
         )
@@ -123,17 +124,29 @@ def process_static_routes(routes, operation, event_ctx=None, logger=None, overri
 @kopf.on.resume(StaticRoute.__group__, StaticRoute.__version__, StaticRoute.__name__)
 @kopf.on.create(StaticRoute.__group__, StaticRoute.__version__, StaticRoute.__name__)
 def create_fn(body, spec, logger, **_):
+    nodeName = spec.get("nodeName")
+    if nodeName is not None and nodeName != NODE_HOSTNAME:
+        return
+        
     destinations = spec.get("destinations", [])
-    gateway = spec["gateway"]
-    interface = spec["interface"]
-    override_bad_destination = spec["force"]
-    remove = spec["remove"]
+    gateway = spec.get("gateway")
+    interface = spec.get("interface")
+    override_bad_destination = spec.get("force")
+    replace = spec.get("replace")
+    remove = spec.get("remove")
+
     routes_to_add_spec = [
             {"destination": destination, "gateway": gateway, "interface": interface, "override_bad_destination": override_bad_destination} for destination in destinations
     ]
 
+    operation = "add"
+    if remove:
+        operation = "del"
+    elif replace:
+        operation = "replace"
+
     return process_static_routes(
-        routes=routes_to_add_spec, operation="del" if remove else "add", event_ctx=body, logger=logger
+        routes=routes_to_add_spec, operation=operation, event_ctx=body, logger=logger
     )
 
 
@@ -146,34 +159,51 @@ def create_fn(body, spec, logger, **_):
 
 @kopf.on.update(StaticRoute.__group__, StaticRoute.__version__, StaticRoute.__name__)
 def update_fn(body, old, new, logger, **_):
-    old_gateway = old["spec"]["gateway"]
-    new_gateway = new["spec"]["gateway"]
+    oldNodeName = old["spec"].get("nodeName")
+    newNodeName = new["spec"].get("nodeName")
+
+    old_gateway = old["spec"].get("gateway")
+    new_gateway = new["spec"].get("gateway")
     old_destinations = old["spec"].get("destinations", [])
     new_destinations = new["spec"].get("destinations", [])
-    old_interface = old["spec"]["interface"]
-    new_interface = new["spec"]["interface"]
-    old_remove = old["spec"]["remove"]
-    new_remove = new["spec"]["remove"]
+    old_interface = old["spec"].get("interface")
+    new_interface = new["spec"].get("interface")
+    old_remove = old["spec"].get("remove")
+    new_remove = new["spec"].get("remove")
+    old_replace = old["spec"].get("replace")
+    new_replace = new["spec"].get("replace")
+    old_override_bad_destination = old["spec"].get("force")
+    new_override_bad_destination = new["spec"].get("force")
     destinations_to_delete = list(set(old_destinations) - set(new_destinations))
     destinations_to_add = list(set(new_destinations) - set(old_destinations))
 
-    routes_to_delete_spec = [
-        {"destination": destination, "gateway": old_gateway, "interface": old_interface}
-        for destination in destinations_to_delete
-    ]
+    if oldNodeName is None or oldNodeName == NODE_HOSTNAME:
+        routes_to_delete_spec = [
+            {"destination": destination, "gateway": old_gateway, "interface": old_interface, "override_bad_destination": old_override_bad_destination}
+            for destination in destinations_to_delete
+        ]
+        operation = "del"
+        if old_remove:
+            operation = "add"
+        elif old_replace:
+            operation = "del"
+        process_static_routes(
+            routes=routes_to_delete_spec, operation=operation, event_ctx=body, logger=logger
+        )
 
-    process_static_routes(
-        routes=routes_to_delete_spec, operation="add" if old_remove else "del", event_ctx=body, logger=logger
-    )
-
-    routes_to_add_spec = [
-        {"destination": destination, "gateway": new_gateway, "interface": new_interface}
-        for destination in destinations_to_add
-    ]
-
-    process_static_routes(
-        routes=routes_to_add_spec, operation="del" if new_remove else "add", event_ctx=body, logger=logger
-    )
+    if newNodeName is None or newNodeName == NODE_HOSTNAME:
+        routes_to_add_spec = [
+            {"destination": destination, "gateway": new_gateway, "interface": new_interface, "override_bad_destination": new_override_bad_destination}
+            for destination in destinations_to_add
+        ]
+        operation = "add"
+        if new_remove:
+            operation = "del"
+        elif new_replace:
+            operation = "replace"
+        process_static_routes(
+            routes=routes_to_add_spec, operation=operation, event_ctx=body, logger=logger
+        )
 
     return
 
@@ -187,16 +217,27 @@ def update_fn(body, old, new, logger, **_):
 
 @kopf.on.delete(StaticRoute.__group__, StaticRoute.__version__, StaticRoute.__name__)
 def delete(body, spec, logger, **_):
+    nodeName = spec.get("nodeName")
+    if nodeName is not None and nodeName != NODE_HOSTNAME:
+        return
+
     destinations = spec.get("destinations", [])
-    gateway = spec["gateway"]
-    interface = spec["interface"]
-    override_bad_destination = spec["force"]
-    remove = spec["remove"]
+    gateway = spec.get("gateway")
+    interface = spec.get("interface")
+    override_bad_destination = spec.get("force")
+    remove = spec.get("remove")
+    replace = spec.get("replace")
 
     routes_to_delete_spec = [
             {"destination": destination, "gateway": gateway, "interface": interface, "override_bad_destination": override_bad_destination} for destination in destinations
     ]
 
+    operation = "del"
+    if remove:
+        operation = "add"
+    elif replace:
+        operation = "del"
+
     return process_static_routes(
-        routes=routes_to_delete_spec, operation="add" if remove else "del", event_ctx=body, logger=logger
+        routes=routes_to_delete_spec, operation=operation, event_ctx=body, logger=logger
     )
